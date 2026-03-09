@@ -544,8 +544,19 @@ class FacebookEventCreator:
                 f"\n=== Creating Event {self.events_created + 1}: {params['title']} ==="
             )
 
-            self.page.goto(self.event_create_url)
-            self.page.wait_for_load_state("networkidle")
+            try:
+                self.page.goto(self.event_create_url, timeout=60000)
+                self.page.wait_for_load_state("networkidle", timeout=30000)
+            except Exception as nav_error:
+                print(f"Navigation error: {nav_error}")
+                # Save screenshot for debugging
+                try:
+                    self.page.screenshot(path="/tmp/fb_nav_error.png")
+                    print("Screenshot saved to /tmp/fb_nav_error.png")
+                except:
+                    pass
+                raise
+
             print(f"Retrieved page: {self.page.title()}")
             print(f"Current URL: {self.page.url}")
 
