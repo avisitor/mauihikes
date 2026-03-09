@@ -4,7 +4,7 @@ import requests
 import certifi
 import argparse
 from config import FIRST_DATE, LAST_DATE, PAGE, EVENT_URLS, GROUP_EVENT_URLS, OUTINGS_URL
-from facebook_event import FacebookEventCreator
+from facebook_event_playwright import FacebookEventCreator
 from utils import convert_date_format, add_am_if_missing
 def parse_arguments():
     """Parse command line arguments to override default configuration."""
