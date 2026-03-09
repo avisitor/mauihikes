@@ -643,8 +643,8 @@ class FacebookEventCreator:
             "xpath=//span[contains(text(), 'Start date')]/following-sibling::div/input"
         )
         el.click()
-        # Select all and replace
-        el.press("Control+a")
+        # Triple-click to select all text in the field
+        el.click(click_count=3)
         el.type(date)
         print(f"startdate After fill: {el.input_value()}")
 
@@ -654,8 +654,8 @@ class FacebookEventCreator:
             "xpath=//span[contains(text(), 'Start time')]/following-sibling::div/input"
         )
         el.click()
-        # Select all and replace
-        el.press("Control+a")
+        # Triple-click to select all text in the field
+        el.click(click_count=3)
         el.type(time_str)
         print(f"meetingtime After fill: {el.input_value()}")
 
@@ -667,13 +667,15 @@ class FacebookEventCreator:
     def _set_event_type(self) -> None:
         """Set the event type to in-person."""
         el = self.page.locator("xpath=//span[text()='Is it in person or virtual?']")
-        el.click()
-        print("Clicked on in-person")
+        # Use JavaScript click to bypass overlaying elements (like Selenium does)
+        el.evaluate("el => el.click()")
+        print("Clicked on in-person dropdown")
 
         in_person = self.page.wait_for_selector(
             "xpath=//span[text()='In person']", timeout=10000
         )
-        in_person.click()
+        # Use JavaScript click here too
+        in_person.evaluate("el => el.click()")
         print("clicked on In person")
 
     def _set_event_location(self, location: str) -> None:
