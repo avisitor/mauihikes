@@ -21,10 +21,10 @@ GROUP_EVENT_URLS = {
 OUTINGS_URL = "https://mauihikes.org/s/ops/getfutureoutings"
 
 # Chrome user profile path (for Selenium)
-CHROME_PROFILE = "/home/rweltman/.config/google-chrome/Default"
+CHROME_PROFILE = "/Users/robw/.config/google-chrome/Default"
 
 # Playwright browser profile directory (stores login state)
-PLAYWRIGHT_PROFILE = "/home/rweltman/.playwright-profile"
+PLAYWRIGHT_PROFILE = "/Users/robw/.playwright-profile"
 
 # Temporary file location for downloaded images
 TEMP_IMAGE_PATH = "/tmp/hike.jpg"
