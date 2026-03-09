@@ -3,6 +3,7 @@
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from playwright_stealth import Stealth
 from datetime import datetime
+from typing import List, Optional, Tuple
 import time
 import getpass
 import os
@@ -37,6 +38,10 @@ class FacebookEventCreator:
         self.context = None
         self.page = None
         self.events_created = 0
+        # Cache of existing events: list of (title_lower, month_day, month_day_padded, month_abbr, day_num)
+        self._existing_events_cache: Optional[List[Tuple[str, str, str, str, str]]] = (
+            None
+        )
         self._setup_browser()
 
     def _setup_browser(self):
@@ -397,58 +402,86 @@ class FacebookEventCreator:
         except Exception as e:
             print(f"Scrolling error: {e}")
 
-    def _event_already_exists(self, title: str, date: str) -> bool:
+    def _normalize_date(self, date: str) -> Tuple[str, str, str, str]:
+        """Normalize a date string into multiple formats for matching.
+
+        Args:
+            date: Date string like "Feb 20, 2026"
+
+        Returns:
+            Tuple of (month_day, month_day_padded, month_abbr, day_num)
+        """
         try:
-            print("Checking for existing events on group events page...")
+            dt = datetime.strptime(date, "%b %d, %Y")
+            # Format without leading zero: "mar 7"
+            month_day = dt.strftime("%b %-d").lower()
+            # Also try with leading zero: "mar 07"
+            month_day_padded = dt.strftime("%b %d").lower()
+            # Just the day number
+            day_num = str(dt.day)
+            month_abbr = dt.strftime("%b").lower()
+        except:
+            month_day = date.lower()
+            month_day_padded = date.lower()
+            day_num = ""
+            month_abbr = ""
+        return (month_day, month_day_padded, month_abbr, day_num)
 
-            self.page.goto(self.group_events_url)
-            self.page.wait_for_load_state("domcontentloaded")
-            sleep(2)
+    def _fetch_existing_events(self) -> None:
+        """Fetch and cache all existing events from the group events page."""
+        print("Fetching existing events from group events page...")
 
-            self._force_load_events()
-            self.page.goto(self.group_events_url)
-            self.page.wait_for_load_state("domcontentloaded")
-            sleep(2)
+        self.page.goto(self.group_events_url)
+        self.page.wait_for_load_state("domcontentloaded")
+        sleep(2)
 
-            self._force_load_events()
-            self._expand_all_events()
+        self._force_load_events()
+        self.page.goto(self.group_events_url)
+        self.page.wait_for_load_state("domcontentloaded")
+        sleep(2)
 
-            # Normalize date: "Feb 20, 2026" -> multiple formats to match
-            # Facebook displays dates in various formats like:
-            # "sat, mar 7" or "sat, mar 7 at 9:00 am" or "mar 7"
-            try:
-                dt = datetime.strptime(date, "%b %d, %Y")
-                # Format without leading zero: "mar 7"
-                month_day = dt.strftime("%b %-d").lower()
-                # Also try with leading zero: "mar 07"
-                month_day_padded = dt.strftime("%b %d").lower()
-                # Just the day number
-                day_num = str(dt.day)
-                month_abbr = dt.strftime("%b").lower()
-            except:
-                month_day = date.lower()
-                month_day_padded = date.lower()
-                day_num = ""
-                month_abbr = ""
+        self._force_load_events()
+        self._expand_all_events()
 
-            print(f"Looking for event with title containing: '{title.lower()}'")
-            print(f"Looking for date matching: '{month_day}' or '{month_day_padded}'")
+        # SELECT THE REAL EVENT CARDS
+        cards = self.page.query_selector_all(
+            "div.x14vqqas.x1nb4dca.x1q0q8m5.xso031l.xsag5q8"
+        )
 
-            # SELECT THE REAL EVENT CARDS
-            cards = self.page.query_selector_all(
-                "div.x14vqqas.x1nb4dca.x1q0q8m5.xso031l.xsag5q8"
+        print(f"Found {len(cards)} event cards")
+
+        # Cache the text content of each card (lowercased)
+        self._existing_events_cache = []
+        for card in cards:
+            text = card.text_content().lower()
+            self._existing_events_cache.append(text)
+            print("---- EVENT CARD ----")
+            print(text)
+            print("--------------------")
+
+        print(f"Cached {len(self._existing_events_cache)} existing events")
+
+    def _event_already_exists(self, title: str, date: str) -> bool:
+        """Check if an event with the given title and date already exists.
+
+        Uses cached event data if available, otherwise fetches from Facebook.
+        """
+        try:
+            # Fetch events if cache is empty
+            if self._existing_events_cache is None:
+                self._fetch_existing_events()
+
+            # Normalize date for matching
+            month_day, month_day_padded, month_abbr, day_num = self._normalize_date(
+                date
             )
 
-            print(f"Found {len(cards)} event cards")
+            print(f"Checking cache for event: '{title}' on '{month_day}'")
 
-            for card in cards:
-                text = card.text_content().lower()
+            title_lower = title.lower()
 
-                print("---- EVENT CARD ----")
-                print(text)
-                print("--------------------")
-
-                title_ok = title.lower() in text
+            for text in self._existing_events_cache:
+                title_ok = title_lower in text
 
                 # Try multiple date formats
                 date_ok = (
@@ -470,22 +503,29 @@ class FacebookEventCreator:
                 )
 
                 if title_ok and date_ok:
-                    print(f"Match found for '{title}' on date '{month_day}'")
+                    print(f"Match found in cache for '{title}' on date '{month_day}'")
                     return True
-                elif title_ok:
-                    print(
-                        f"Title match for '{title}' but date '{month_day}' not found in card"
-                    )
-                elif date_ok:
-                    print(
-                        f"Date match for '{month_day}' but title '{title}' not found in card"
-                    )
 
+            print(f"No match found in cache for '{title}' on '{month_day}'")
             return False
 
         except Exception as e:
             print(f"Error checking existing events: {e}")
             return False
+
+    def _add_to_existing_events_cache(self, title: str, date: str) -> None:
+        """Add a newly created event to the cache.
+
+        This prevents re-fetching the events page after creating each event.
+        """
+        if self._existing_events_cache is None:
+            self._existing_events_cache = []
+
+        # Create a simple text representation similar to what Facebook shows
+        month_day, _, _, _ = self._normalize_date(date)
+        cache_entry = f"{title.lower()} {month_day}"
+        self._existing_events_cache.append(cache_entry)
+        print(f"Added to cache: '{cache_entry}'")
 
     def _expand_all_events(self):
         """Click 'See more' until no additional events load."""
@@ -618,6 +658,9 @@ class FacebookEventCreator:
 
             self.events_created += 1
             print(f"Event {self.events_created} processing completed.")
+
+            # Add to cache so we don't need to refetch for subsequent duplicate checks
+            self._add_to_existing_events_cache(params["title"], params["date"])
 
             sleep(2)  # Brief pause between events
 
