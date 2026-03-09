@@ -10,7 +10,7 @@ Usage: python login_facebook.py
 
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
-from config import PLAYWRIGHT_PROFILE
+from config import PLAYWRIGHT_PROFILE, EVENT_URLS, PAGE
 
 
 def main():
@@ -46,7 +46,35 @@ def main():
         )  # Match stealth patches from facebook_event_playwright.py
         page.goto("https://www.facebook.com/")
 
-        print("Browser opened. Log in to Facebook, then close the browser window.")
+        print("Browser opened. Log in to Facebook.")
+        print()
+
+        # Wait for user to log in - detect by URL change away from login page
+        print("Waiting for you to complete login...")
+        input("Press Enter after you have logged in successfully...")
+
+        # Now warm up the session by visiting the event creation page
+        event_create_url = EVENT_URLS.get(PAGE)
+        if event_create_url:
+            print()
+            print(f"Warming up session by visiting event creation page...")
+            page.goto(event_create_url)
+            page.wait_for_load_state("networkidle")
+
+            # Check if we got redirected to login
+            if "login" in page.url.lower():
+                print()
+                print("WARNING: Redirected to login page!")
+                print("You may need to complete additional verification.")
+                print("Please complete any prompts in the browser.")
+                input("Press Enter after you can see the event creation form...")
+            else:
+                print(f"Successfully reached event creation page: {page.url}")
+                print("Waiting a few seconds to establish session...")
+                page.wait_for_timeout(3000)
+
+        print()
+        print("Session warmed up! Close the browser window to save.")
         print("Waiting for browser to close...")
 
         # Wait for the user to close the browser
