@@ -30,7 +30,7 @@ class FacebookEventCreator:
         self.context = self.playwright.chromium.launch_persistent_context(
             user_data_dir=PLAYWRIGHT_PROFILE,
             headless=True,
-            executable_path="/usr/bin/chromium-browser",  # Use system Chromium
+            # Use Playwright's bundled Chromium (same as login_facebook.py)
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-notifications",
