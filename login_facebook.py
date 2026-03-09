@@ -9,6 +9,7 @@ Usage: python login_facebook.py
 """
 
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 from config import PLAYWRIGHT_PROFILE
 
 
@@ -22,16 +23,27 @@ def main():
 
     with sync_playwright() as playwright:
         # Launch in HEADED mode (headless=False) so you can interact
+        # IMPORTANT: Use the same browser args, viewport, user_agent, and locale
+        # as facebook_event_playwright.py to maintain consistent fingerprint
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=PLAYWRIGHT_PROFILE,
             headless=False,  # Show the browser window
             args=[
+                "--disable-blink-features=AutomationControlled",
                 "--disable-notifications",
                 "--disable-geolocation",
+                "--no-sandbox",
             ],
+            permissions=[],  # Deny all permissions by default
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            locale="en-US",
         )
 
         page = context.new_page()
+        Stealth().apply_stealth_sync(
+            page
+        )  # Match stealth patches from facebook_event_playwright.py
         page.goto("https://www.facebook.com/")
 
         print("Browser opened. Log in to Facebook, then close the browser window.")
