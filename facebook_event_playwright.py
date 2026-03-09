@@ -625,11 +625,15 @@ class FacebookEventCreator:
 
     def _set_event_name(self, title: str) -> None:
         """Set the event name."""
+        # Wait for the page to be ready
+        sleep(2)
         el = self.page.wait_for_selector(
             "xpath=//span[contains(text(), 'Event name')]/following-sibling::input[1]",
-            timeout=10000,
+            timeout=30000,
         )
-        el.fill(title)
+        el.type(
+            title
+        )  # Use type() instead of fill() - more like Selenium's send_keys()
 
     def _set_event_date(self, date: str) -> None:
         """Set the event date."""
@@ -637,20 +641,20 @@ class FacebookEventCreator:
             "xpath=//span[contains(text(), 'Start date')]/following-sibling::div/input"
         )
         el.click()
-        el.fill("")  # Clear the field
-        el.evaluate("el => el.select()")
-        el.fill(date)
+        # Select all and replace
+        el.press("Control+a")
+        el.type(date)
         print(f"startdate After fill: {el.input_value()}")
 
-    def _set_event_time(self, time: str) -> None:
+    def _set_event_time(self, time_str: str) -> None:
         """Set the event time."""
         el = self.page.locator(
             "xpath=//span[contains(text(), 'Start time')]/following-sibling::div/input"
         )
         el.click()
-        el.fill("")  # Clear the field
-        el.evaluate("el => el.select()")
-        el.fill(time)
+        # Select all and replace
+        el.press("Control+a")
+        el.type(time_str)
         print(f"meetingtime After fill: {el.input_value()}")
 
     def _set_event_details(self, description: str) -> None:
