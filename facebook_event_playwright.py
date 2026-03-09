@@ -685,7 +685,8 @@ class FacebookEventCreator:
         )
         el.fill(location)
         el.press("Enter")
-        el.blur()
+        # Use JavaScript to blur since Playwright ElementHandle doesn't have blur()
+        el.evaluate("el => el.blur()")
         print("blurred meetinglocation")
 
         details = self.page.locator("textarea").first
