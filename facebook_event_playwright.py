@@ -4,9 +4,28 @@ from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from playwright_stealth import Stealth
 from datetime import datetime
 import time
+import getpass
+import os
+from pathlib import Path
 
 from config import TEMP_IMAGE_PATH, PLAYWRIGHT_PROFILE
 from utils import sleep, download_image
+
+
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), value.strip())
+
+
+# Load environment variables from .env file
+load_env_file()
 
 
 class FacebookEventCreator:
@@ -48,6 +67,312 @@ class FacebookEventCreator:
             self.page
         )  # Apply stealth patches to avoid headless detection
 
+    def _is_login_page(self) -> bool:
+        """Check if current page is a Facebook login page."""
+        return "login" in self.page.url.lower()
+
+    def _login(self) -> bool:
+        """
+        Prompt for credentials and log into Facebook.
+        Returns True if login appears successful, False otherwise.
+        """
+        print("\n" + "=" * 60)
+        print("LOGIN REQUIRED")
+        print("=" * 60)
+        print("Facebook requires authentication to create events.")
+        print()
+
+        print(f"Current URL: {self.page.url}")
+
+        # Navigate to main login page for consistent form
+        print("Navigating to Facebook login page...")
+        self.page.goto("https://www.facebook.com/login")
+        self.page.wait_for_load_state("networkidle")
+        sleep(2)
+
+        print(f"Login page URL: {self.page.url}")
+        print(f"Page title: {self.page.title()}")
+
+        # Debug: save screenshot to help diagnose
+        try:
+            self.page.screenshot(path="/tmp/fb_login_page.png")
+            print("Screenshot saved to /tmp/fb_login_page.png")
+        except Exception as e:
+            print(f"Could not save screenshot: {e}")
+
+        # Get credentials from environment variables, fall back to prompting
+        email = os.getenv("FACEBOOK_EMAIL")
+        password = os.getenv("FACEBOOK_PASSWORD")
+
+        if email and password:
+            print(f"Using credentials from .env for: {email}")
+        else:
+            print("No credentials found in .env, prompting...")
+            email = input("Enter your Facebook email or phone: ")
+            password = getpass.getpass("Enter your Facebook password: ")
+
+        # Try multiple selectors for email field (Facebook uses different variants)
+        email_selectors = [
+            "#email",
+            "input[name='email']",
+            "input[type='email']",
+            "input[type='text'][name='email']",
+            "input[data-testid='royal_email']",
+        ]
+
+        password_selectors = [
+            "#pass",
+            "input[name='pass']",
+            "input[type='password']",
+            "input[data-testid='royal_pass']",
+        ]
+
+        login_button_selectors = [
+            "button[name='login']",
+            "button[type='submit']",
+            "button[data-testid='royal_login_button']",
+            "#loginbutton",
+            "button:has-text('Log in')",
+            "button:has-text('Log In')",
+            # input[type='submit'] last as it may be hidden
+            "input[type='submit']",
+        ]
+
+        try:
+            # Find and fill email
+            email_input = None
+            for selector in email_selectors:
+                email_input = self.page.query_selector(selector)
+                if email_input:
+                    print(f"Found email field with selector: {selector}")
+                    break
+
+            if not email_input:
+                print("Could not find email input field!")
+                print("Available input fields on page:")
+                inputs = self.page.query_selector_all("input")
+                for inp in inputs[:10]:  # Show first 10
+                    try:
+                        attrs = self.page.evaluate(
+                            """(el) => {
+                            return {
+                                id: el.id,
+                                name: el.name,
+                                type: el.type,
+                                placeholder: el.placeholder
+                            }
+                        }""",
+                            inp,
+                        )
+                        print(f"  Input: {attrs}")
+                    except:
+                        pass
+                return False
+
+            email_input.fill(email)
+
+            # Find and fill password
+            password_input = None
+            for selector in password_selectors:
+                password_input = self.page.query_selector(selector)
+                if password_input:
+                    print(f"Found password field with selector: {selector}")
+                    break
+
+            if not password_input:
+                print("Could not find password input field!")
+                return False
+
+            password_input.fill(password)
+
+            # Find and click login button
+            login_button = None
+            for selector in login_button_selectors:
+                btn = self.page.query_selector(selector)
+                if btn:
+                    # Check if button is actually visible
+                    is_visible = btn.is_visible()
+                    if is_visible:
+                        print(f"Found visible login button with selector: {selector}")
+                        login_button = btn
+                        break
+                    else:
+                        print(
+                            f"Found login button with {selector} but it's not visible, trying next..."
+                        )
+
+            if not login_button:
+                print("Could not find a visible login button!")
+                # Try using keyboard to submit instead
+                print("Attempting to submit via Enter key...")
+                password_input.press("Enter")
+            else:
+                login_button.click()
+
+            # Wait for navigation
+            print("Logging in...")
+            self.page.wait_for_load_state("networkidle")
+            sleep(3)  # Give Facebook time to process
+
+            # Wait a bit more and check URL multiple times (Facebook redirects can be slow)
+            for _ in range(3):
+                current_url = self.page.url.lower()
+                print(f"Checking URL: {self.page.url}")
+
+                # Check for 2FA/verification pages first (before checking for 'login')
+                if (
+                    "two_step_verification" in current_url
+                    or "checkpoint" in current_url
+                ):
+                    return self._handle_2fa()
+
+                # Also check for 2FA input field
+                if self.page.query_selector("input[name='approvals_code']"):
+                    return self._handle_2fa()
+
+                # If we're on the homepage or somewhere else that's not login, success!
+                if "login" not in current_url:
+                    print("Login successful!")
+                    return True
+
+                # Still on login page, wait a bit more
+                sleep(2)
+
+            # After retries, still on login
+            print("Login may have failed. Current URL:", self.page.url)
+            print("Please check your credentials and try again.")
+            return False
+
+        except Exception as e:
+            print(f"Error during login: {e}")
+            return False
+
+    def _handle_2fa(self) -> bool:
+        """Handle two-factor authentication if required."""
+        print("\n" + "-" * 40)
+        print("TWO-FACTOR AUTHENTICATION REQUIRED")
+        print("-" * 40)
+
+        # Save screenshot for debugging
+        try:
+            self.page.screenshot(path="/tmp/fb_2fa_page.png")
+            print("Screenshot saved to /tmp/fb_2fa_page.png")
+        except Exception as e:
+            print(f"Could not save screenshot: {e}")
+
+        print(f"2FA page URL: {self.page.url}")
+
+        # Try different 2FA input selectors
+        twofa_selectors = [
+            "input[name='approvals_code']",
+            "input[type='text'][autocomplete='one-time-code']",
+            "input[id='approvals_code']",
+            "input[type='tel']",  # Some 2FA pages use tel input
+            "input[type='number']",
+            "input[type='text']",  # Generic fallback
+        ]
+
+        twofa_input = None
+        for selector in twofa_selectors:
+            elements = self.page.query_selector_all(selector)
+            for el in elements:
+                if el.is_visible():
+                    print(f"Found 2FA input with selector: {selector}")
+                    twofa_input = el
+                    break
+            if twofa_input:
+                break
+
+        if not twofa_input:
+            print("Could not find 2FA input field.")
+            print("Looking for input fields on the page...")
+            inputs = self.page.query_selector_all("input")
+            for inp in inputs[:10]:
+                try:
+                    is_visible = inp.is_visible()
+                    attrs = self.page.evaluate(
+                        """(el) => {
+                        return {
+                            id: el.id,
+                            name: el.name,
+                            type: el.type,
+                            placeholder: el.placeholder
+                        }
+                    }""",
+                        inp,
+                    )
+                    print(f"  Input (visible={is_visible}): {attrs}")
+                except:
+                    pass
+            print("Current URL:", self.page.url)
+            return False
+
+        code = input("Enter the 2FA code from your authenticator app or SMS: ")
+
+        try:
+            twofa_input.fill(code)
+
+            # Find and click submit button - check visibility
+            submit_selectors = [
+                "button[type='submit']",
+                "input[type='submit']",
+                "button:has-text('Continue')",
+                "button:has-text('Submit')",
+            ]
+
+            submit_button = None
+            for selector in submit_selectors:
+                btn = self.page.query_selector(selector)
+                if btn and btn.is_visible():
+                    submit_button = btn
+                    break
+
+            if submit_button:
+                submit_button.click()
+            else:
+                # Try pressing Enter
+                print("No visible submit button found, pressing Enter...")
+                twofa_input.press("Enter")
+
+            print("Submitting 2FA code...")
+            self.page.wait_for_load_state("networkidle")
+            sleep(3)
+
+            print(f"Post-2FA URL: {self.page.url}")
+
+            # Check if we passed 2FA
+            current_url = self.page.url.lower()
+            if (
+                "checkpoint" not in current_url
+                and "login" not in current_url
+                and "two_step_verification" not in current_url
+            ):
+                print("2FA verification successful!")
+                return True
+            else:
+                print("2FA verification may have failed or needs additional steps.")
+                print("Current URL:", self.page.url)
+                # Take another screenshot
+                try:
+                    self.page.screenshot(path="/tmp/fb_post_2fa.png")
+                    print("Screenshot saved to /tmp/fb_post_2fa.png")
+                except:
+                    pass
+                return False
+
+        except Exception as e:
+            print(f"Error during 2FA: {e}")
+            return False
+
+    def _ensure_logged_in(self) -> bool:
+        """
+        Check if logged in, and if not, perform login.
+        Returns True if logged in successfully, False otherwise.
+        """
+        if self._is_login_page():
+            return self._login()
+        return True
+
     def _force_load_events(self):
         """Scroll the events page to trigger lazy loading."""
         try:
@@ -88,14 +413,26 @@ class FacebookEventCreator:
             self._force_load_events()
             self._expand_all_events()
 
-            # Normalize date: "Feb 20, 2026" -> "feb 20"
-            # Use %-d to avoid leading zeros (e.g., "mar 7" not "mar 07")
-            # since Facebook displays dates without leading zeros
+            # Normalize date: "Feb 20, 2026" -> multiple formats to match
+            # Facebook displays dates in various formats like:
+            # "sat, mar 7" or "sat, mar 7 at 9:00 am" or "mar 7"
             try:
                 dt = datetime.strptime(date, "%b %d, %Y")
+                # Format without leading zero: "mar 7"
                 month_day = dt.strftime("%b %-d").lower()
+                # Also try with leading zero: "mar 07"
+                month_day_padded = dt.strftime("%b %d").lower()
+                # Just the day number
+                day_num = str(dt.day)
+                month_abbr = dt.strftime("%b").lower()
             except:
                 month_day = date.lower()
+                month_day_padded = date.lower()
+                day_num = ""
+                month_abbr = ""
+
+            print(f"Looking for event with title containing: '{title.lower()}'")
+            print(f"Looking for date matching: '{month_day}' or '{month_day_padded}'")
 
             # SELECT THE REAL EVENT CARDS
             cards = self.page.query_selector_all(
@@ -112,11 +449,37 @@ class FacebookEventCreator:
                 print("--------------------")
 
                 title_ok = title.lower() in text
-                date_ok = month_day in text
+
+                # Try multiple date formats
+                date_ok = (
+                    month_day in text
+                    or month_day_padded in text
+                    # Also check for month + day separately (e.g., "mar" and "14" both in text)
+                    or (
+                        month_abbr
+                        and day_num
+                        and month_abbr in text
+                        and f", {day_num}" in text
+                    )
+                    or (
+                        month_abbr
+                        and day_num
+                        and month_abbr in text
+                        and f" {day_num}" in text
+                    )
+                )
 
                 if title_ok and date_ok:
-                    print(f"Match found for '{title}' on '{month_day}'")
+                    print(f"Match found for '{title}' on date '{month_day}'")
                     return True
+                elif title_ok:
+                    print(
+                        f"Title match for '{title}' but date '{month_day}' not found in card"
+                    )
+                elif date_ok:
+                    print(
+                        f"Date match for '{month_day}' but title '{title}' not found in card"
+                    )
 
             return False
 
@@ -189,10 +552,28 @@ class FacebookEventCreator:
             # Check if we're on the right page before proceeding
             if "events/create" not in self.page.url:
                 print(f"WARNING: Redirected away from event creation page!")
-                print("This may indicate a login issue or Facebook blocking.")
-                raise Exception(
-                    f"Redirected to {self.page.url} instead of event creation page"
-                )
+
+                # Check if we're on a login page and attempt to log in
+                if self._is_login_page():
+                    print("Detected login page - attempting to authenticate...")
+                    if self._login():
+                        # Retry navigating to event creation page
+                        print("Retrying navigation to event creation page...")
+                        self.page.goto(self.event_create_url)
+                        self.page.wait_for_load_state("networkidle")
+                        print(f"Current URL after login: {self.page.url}")
+
+                        if "events/create" not in self.page.url:
+                            raise Exception(
+                                f"Still redirected to {self.page.url} after login"
+                            )
+                    else:
+                        raise Exception("Login failed - cannot create events")
+                else:
+                    print("This may indicate a login issue or Facebook blocking.")
+                    raise Exception(
+                        f"Redirected to {self.page.url} instead of event creation page"
+                    )
 
             self._set_event_name(params["title"])
             print("Set title")
