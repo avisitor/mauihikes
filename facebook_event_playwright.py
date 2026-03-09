@@ -725,11 +725,7 @@ class FacebookEventCreator:
             # Try each selector until we find the button
             for selector in submit_selectors:
                 try:
-                    if selector.startswith("xpath="):
-                        elements = self.page.query_selector_all(selector)
-                    else:
-                        elements = self.page.query_selector_all(selector)
-
+                    elements = self.page.query_selector_all(selector)
                     if elements:
                         submit_element = elements[0]
                         print(f"Found submit button using selector: {selector}")
@@ -746,38 +742,43 @@ class FacebookEventCreator:
             text = submit_element.text_content()
             print(f"Submit element found: {tag_name}, text: {text}")
 
-            # Try multiple click strategies
-            click_strategies = [
-                lambda el: el.click(),
-                lambda el: el.evaluate("el => el.click()"),
-                lambda el: (
-                    el.evaluate("el => el.focus()"),
-                    el.evaluate("el => el.click()"),
-                ),
-                lambda el: (el.scroll_into_view_if_needed(), el.click()),
-            ]
+            # Use JavaScript click directly - this is the strategy that works on Facebook
+            print("Clicking submit button with JavaScript...")
+            submit_element.evaluate("el => el.click()")
 
-            for i, strategy in enumerate(click_strategies):
+            # Poll for success instead of fixed sleep
+            # Check every 0.5 seconds for up to 30 seconds
+            max_wait_seconds = 30
+            poll_interval = 0.5
+            elapsed = 0
+
+            print(f"Polling for submission success (max {max_wait_seconds}s)...")
+            while elapsed < max_wait_seconds:
+                sleep(poll_interval)
+                elapsed += poll_interval
+
+                # Check if URL changed away from create page
+                current_url = self.page.url
+                if "events/create" not in current_url:
+                    print(f"Submit successful! URL changed to: {current_url}")
+                    return True
+
+                # Check for success indicator in page content
                 try:
-                    print(f"Trying click strategy {i + 1}...")
-                    strategy(submit_element)
-                    sleep(20)  # Wait for potential page changes
-
-                    # Check if we're still on the same page or if submission worked
-                    current_url = self.page.url
                     page_content = self.page.content()
-                    if (
-                        "events/create" not in current_url
-                        or "Event created" in page_content
-                    ):
-                        print("Submit appears successful!")
+                    if "Event created" in page_content:
+                        print("Submit successful! Found 'Event created' in page")
                         return True
+                except Exception:
+                    pass  # Page might be navigating, continue polling
 
-                except Exception as e:
-                    print(f"Click strategy {i + 1} failed: {e}")
-                    continue
+                # Progress indicator every 5 seconds
+                if elapsed % 5 == 0:
+                    print(f"  Still waiting... ({elapsed:.0f}s)")
 
-            print("All automated submit attempts failed")
+            print(
+                f"Submit timed out after {max_wait_seconds}s - no success indicators found"
+            )
             return False
 
         except Exception as e:
