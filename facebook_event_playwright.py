@@ -546,7 +546,9 @@ class FacebookEventCreator:
 
             try:
                 self.page.goto(self.event_create_url, timeout=60000)
-                self.page.wait_for_load_state("networkidle", timeout=30000)
+                # Use domcontentloaded instead of networkidle - Facebook never stops making requests
+                self.page.wait_for_load_state("domcontentloaded", timeout=30000)
+                sleep(3)  # Give extra time for dynamic content to load
             except Exception as nav_error:
                 print(f"Navigation error: {nav_error}")
                 # Save screenshot for debugging
