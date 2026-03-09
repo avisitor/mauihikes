@@ -25,7 +25,6 @@ def main():
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=PLAYWRIGHT_PROFILE,
             headless=False,  # Show the browser window
-            executable_path="/usr/bin/chromium-browser",
             args=[
                 "--disable-notifications",
                 "--disable-geolocation",
